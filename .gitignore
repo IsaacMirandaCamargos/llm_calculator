@@ -1,0 +1,6 @@
+.venv
+*.ipynb
+app.py
+data/*
+*.pyc
+tokenizer/*

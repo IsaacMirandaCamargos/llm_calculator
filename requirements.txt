@@ -1,0 +1,9 @@
+polars
+joblib
+numpy
+tqdm
+tokenizers
+dataset
+torch
+matplotlib
+streamlit

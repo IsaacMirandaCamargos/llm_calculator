@@ -13,7 +13,7 @@ if __name__ == "__main__":
     config = {
         "data": {
             "path": "data/",
-            "batch_size": 128
+            "batch_size": 256
         },
         "tokenizer": {
             "vocab": "tokenizer/vocab.json",
@@ -21,21 +21,21 @@ if __name__ == "__main__":
         },
         "model": {
             "max_len": 1024,
-            "vocab_size": 1000,
-            "d_model": 256,
+            "vocab_size": 400,
+            "d_model": 1024,
             "head_dim": 64,
-            "n_heads": 4,
-            "ff_ratio": 16,
-            "n_layers": 1,
+            "n_heads": 16,
+            "ff_ratio": 4,
+            "n_layers": 8,
             "mask": True
         },
         "training": {
             "epochs": 1,
             "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "lr": 1e-3,
+            "lr": 1e-4,
             "scheduler_step": 10,
             "scheduler_gamma": 0.1,
-            "eval_interval": 100,
+            "eval_interval": 50,
             "record_interval": 5,
             "eval_max_gen_len": 32,
             "eval_questions": [
@@ -54,9 +54,17 @@ if __name__ == "__main__":
     tokenizer = Tokenizer(**config["tokenizer"]) # tokenizer
     model = Transformer(**config["model"]) # modelo
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["lr"]) # otimizador
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config["training"]["scheduler_step"], gamma=config["training"]["scheduler_gamma"]) # scheduler
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=config["training"]["lr"],
+        steps_per_epoch=len(dataset) // config["data"]["batch_size"],
+        epochs=config["training"]["epochs"],
+    )
     recorder = Recorder(model)
     recorder.calibrate()
+    
+    # print model number of params
+    print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters.")
 
     # Training loop
     eval_interval = config["training"]["eval_interval"]
@@ -68,12 +76,12 @@ if __name__ == "__main__":
         
         last_five_loss = []
         train_dataloader = iter(dataset)
-        pbar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{config['training']['epochs']}", total=len(dataset) // config["data"]["batch_size"])
+        pbar = tqdm(enumerate(train_dataloader, start=1), desc=f"Epoch {epoch+1}/{config['training']['epochs']}", total=len(dataset) // config["data"]["batch_size"])
 
-        for b in pbar:
+        for i, b in pbar:
             
             optimizer.zero_grad() # limpar gradientes antigos
-            
+
             # Tokenize batch
             batch = tokenizer.encode_with_tokens(b)
             inputs = torch.tensor([b['tokens'] for b in batch], dtype=torch.long).to(device)
@@ -105,14 +113,15 @@ if __name__ == "__main__":
                 "lr": f"{lr:.2e}",
                 "valid%": f"{valid*100:.2f}%"
             })
+            scheduler.step() # atualizar taxa de aprendizado
 
-            # RECORDING
-            if (pbar.n + 1) % record_interval == 0:
-                recorder.log(pbar.n + 1)
-                recorder.plot(f"assets/weight_norms/epoch{epoch+1}.png")
+            # # RECORDING
+            # if (pbar.n + 1) % record_interval == 0:
+            #     recorder.log(pbar.n + 1)
+            #     recorder.plot(f"assets/weight_norms/epoch{epoch+1}.png")
 
             # EVALUATION
-            if (pbar.n + 1) % eval_interval == 0:
+            if i % eval_interval == 0:
                 model.eval()
                 with torch.no_grad():
                     for q in config["training"]["eval_questions"]:
@@ -129,5 +138,5 @@ if __name__ == "__main__":
                         print()  # nova linha após cada pergunta
                 model.train()
 
-        scheduler.step()
+        # scheduler.step()
         

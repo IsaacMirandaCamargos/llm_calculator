@@ -77,10 +77,10 @@ class TransformerBlock(nn.Module):
 
         # LAYERS
         self.attention = Attention(d_model=d_model, head_dim=head_dim, n_heads=n_heads, mask=mask)
-        self.norm_1 = nn.LayerNorm(d_model)
+        self.norm_1 = nn.RMSNorm(d_model)
 
         self.ffn = FeedForwardNetwork(d_model=d_model, ff_ratio=ff_ratio)
-        self.norm_2 = nn.LayerNorm(d_model)
+        self.norm_2 = nn.RMSNorm(d_model)
 
         # DROPOUT
         self.dropout_attn = nn.Dropout(p=dropout)
@@ -106,12 +106,10 @@ class TransformerBlock(nn.Module):
             nn.init.zeros_(self.norm_2.bias)
 
     def forward(self, x):
-        x_norm = self.norm_1(x)
-        y, scores = self.attention(x_norm)
-        x = x + self.dropout_attn(y)
+        y, scores = self.attention(x)
+        x = self.norm_1(x + self.dropout_attn(y))   # dropout no output da atenção [web:3]
 
-        x_norm = self.norm_2(x)
-        ff = self.ffn(x_norm)
-        x = x + self.dropout_ffn(ff)
+        ff = self.ffn(x)
+        x = self.norm_2(x + self.dropout_ffn(ff))   # dropout no output do FFN [web:3]
 
         return x, scores

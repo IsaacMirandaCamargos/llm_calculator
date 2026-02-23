@@ -57,7 +57,7 @@ class Transformer(nn.Module):
             x, score = layer(x)
             scores[layer.layer_id] = score
 
-        x = F.softmax(self.out_proj(x), dim=-1)
+        x = self.out_proj(x) # F.softmax(self.out_proj(x), dim=-1)
         return x, scores
 
 

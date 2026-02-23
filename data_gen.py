@@ -77,10 +77,10 @@ def create_data(n_total, n_batch, max, min, save_path, num_workers):
 
 if __name__ == "__main__":
     n_total = 1_000_000
-    n_batch = 10_000
-    min_value = -1000
-    max_value = 1000
-    save_path = "data_2"
+    n_batch = 100_000
+    min_value = -10
+    max_value = 10
+    save_path = "data"
     num_workers = max(1, cpu_count() - 1)
     create_data(n_total, n_batch, max_value, min_value, save_path, num_workers)
     

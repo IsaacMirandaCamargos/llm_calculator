@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # tokenizer = ByteLevelBPETokenizer()
     # tokenizer.train_from_iterator(
     #     batch_iterator(batch_size=2048),
-    #     vocab_size=100,
+    #     vocab_size=1024,
     #     min_frequency=10,
     #     special_tokens=["<start>", "<answer>", "<end>", "<unk>"],
     # )

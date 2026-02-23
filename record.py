@@ -1,26 +1,38 @@
 import torch
 
+
 def _l2(x):
-    return torch.linalg.norm(x.detach().float()).item()  # [web:9]
+    return torch.linalg.norm(x.detach().float()).item()
+
+
+def _l2_grad(param):
+    # param é um Parameter (ex.: module.weight)
+    if (param is None) or (param.grad is None):
+        return None
+    return torch.linalg.norm(param.grad.detach().float()).item()
+
 
 def _is_leaf(m):
     return len(list(m.children())) == 0
+
 
 class WeightNormRecorder:
     def __init__(self, model):
         self.model = model
         self.names = None
         self.norms = {}
+        self.grad_norms = {}
         self.steps = [0]
 
     def calibrate(self):
         self.names = []
-        for name, m in self.model.named_modules():  # [web:16]
+        for name, m in self.model.named_modules():
             if name and _is_leaf(m) and hasattr(m, "weight"):
                 self.names.append(name)
 
-        name_to_module = dict(self.model.named_modules())  # [web:16]
+        name_to_module = dict(self.model.named_modules())
         self.norms = {n: [_l2(name_to_module[n].weight)] for n in self.names}
+        self.grad_norms = {n: [_l2_grad(name_to_module[n].weight)] for n in self.names}
 
     @torch.no_grad()
     def log(self, step):
@@ -28,125 +40,70 @@ class WeightNormRecorder:
             self.calibrate()
 
         self.steps.append(step)
-        name_to_module = dict(self.model.named_modules())  # [web:16]
+        name_to_module = dict(self.model.named_modules())
 
         for n in self.names:
-            self.norms[n].append(_l2(name_to_module[n].weight))
+            w = name_to_module[n].weight
+            self.norms[n].append(_l2(w))
+            self.grad_norms[n].append(_l2_grad(w))
 
-        return self.norms
+        # Retorna ambos (você pode mudar para retornar só um se preferir)
+        return {"weight_norms": self.norms, "grad_norms": self.grad_norms, "steps": self.steps}
 
-    def plot(
-        self,
-        savepath,
-        ncols=3,
-        suptitle="Weight L2 norms (per module)",
-        dpi=200,
-        yscale="log",                 # "linear" ou "log"
-        sort_by="last",               # "name" ou "last"
-        top_k=None,                   # ex: 24 (plotar só as top-k); None = todas
-        max_plots_per_fig=30,         # paginação: quantos painéis por figura
-        w_per_ax=5.4,                 # polegadas por subplot (largura)
-        h_per_ax=2.6,                 # polegadas por subplot (altura)
-        min_figsize=(12, 7),
-        max_figsize=(30, 20),
-        wspace=0.35,                  # espaço horizontal entre subplots [web:46]
-        hspace=0.55,                  # espaço vertical entre subplots [web:46]
-        title_fontsize=9,
-        line_width=1.6,
-    ):
+
+    def plot(self, savepath, ncols=3, yscale="log", dpi=200,
+            suptitle="Weight/Grad L2 norms (per module)"):
         import math
         import matplotlib.pyplot as plt
         from pathlib import Path
 
         if not self.norms:
             raise RuntimeError("Nada para plotar: rode calibrate() e/ou log(step) antes.")
+        if not getattr(self, "grad_norms", None):
+            raise RuntimeError("grad_norms não encontrado: use o recorder que registra grad_norms.")
 
-        # --- escolher e ordenar módulos ---
-        keys = list(self.norms.keys())
+        keys = sorted(self.norms.keys())
+        n = len(keys)
+        ncols = max(1, int(ncols))
+        nrows = math.ceil(n / ncols)
 
-        if sort_by == "last":
-            keys.sort(key=lambda k: (self.norms[k][-1] if self.norms[k] else float("-inf")), reverse=True)
-        else:
-            keys.sort()
-
-        if top_k is not None:
-            keys = keys[:int(top_k)]
-
-        nplots_total = len(keys)
-        if nplots_total == 0:
-            raise RuntimeError("Nada para plotar: lista de módulos vazia.")
-
-        # paginação
-        max_plots_per_fig = max(1, int(max_plots_per_fig))
-        pages = int(math.ceil(nplots_total / max_plots_per_fig))
-
-        savepath = Path(str(savepath))
-        savepath.parent.mkdir(parents=True, exist_ok=True)
-
-        # eixo x
         xs_full = list(self.steps) if self.steps else None
 
-        out_paths = []
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 2.6 * nrows), sharex=True, squeeze=False)
+        axes = axes.ravel()
 
-        for p in range(pages):
-            chunk = keys[p * max_plots_per_fig : (p + 1) * max_plots_per_fig]
-            nplots = len(chunk)
+        for i, name in enumerate(keys):
+            ax = axes[i]
 
-            ncols_eff = max(1, int(ncols))
-            nrows_eff = int(math.ceil(nplots / ncols_eff))
+            ys_w = self.norms[name]
+            xs = (xs_full[:len(ys_w)] if xs_full is not None else list(range(len(ys_w))))
+            ax.plot(xs, ys_w, lw=1.6, c="C0")
 
-            # --- figsize dinâmico por página ---
-            fig_w = ncols_eff * w_per_ax
-            fig_h = nrows_eff * h_per_ax
-            fig_w = max(min_figsize[0], min(fig_w, max_figsize[0]))
-            fig_h = max(min_figsize[1], min(fig_h, max_figsize[1]))
-            figsize = (fig_w, fig_h)
+            axg = ax.twinx()  # segundo eixo Y no mesmo subplot [web:16]
+            ys_g = self.grad_norms.get(name, [])[:len(xs)]
+            ys_g = [float("nan") if v is None else float(v) for v in ys_g]
+            axg.plot(xs, ys_g, lw=1.3, c="C1", alpha=0.9)
 
-            fig, axes = plt.subplots(
-                nrows=nrows_eff, ncols=ncols_eff, figsize=figsize, sharex=True, squeeze=False
-            )
-            fig.subplots_adjust(wspace=wspace, hspace=hspace)  # controla wspace/hspace [web:46]
-            axes_flat = axes.ravel()
+            if yscale:
+                ax.set_yscale(yscale)
+                axg.set_yscale(yscale)
 
-            for i, name in enumerate(chunk):
-                ax = axes_flat[i]
-                ys = self.norms[name]
+            ax.set_title(name, loc="left", fontsize=9)
+            ax.grid(True, alpha=0.25)
 
-                if xs_full is None:
-                    xs = list(range(len(ys)))
-                else:
-                    xs = xs_full[:len(ys)]
+            if not ax.get_subplotspec().is_last_row():
+                ax.tick_params(labelbottom=False)
+                axg.tick_params(labelbottom=False)
 
-                ax.plot(xs, ys, linewidth=line_width)
+        for j in range(n, len(axes)):
+            axes[j].set_axis_off()  # desliga subplots vazios [web:43]
 
-                if yscale:
-                    ax.set_yscale(yscale)
+        fig.suptitle(suptitle)
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
 
-                ax.set_title(name, loc="left", fontsize=title_fontsize)
-                ax.grid(True, alpha=0.25)
+        savepath = Path(savepath)
+        savepath.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(savepath, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        return str(savepath)
 
-                # menos poluição: só última linha mostra ticks do x
-                if not ax.get_subplotspec().is_last_row():
-                    ax.tick_params(labelbottom=False)
-
-            # desligar eixos vazios
-            for j in range(nplots, len(axes_flat)):
-                axes_flat[j].axis("off")
-
-            page_title = suptitle if pages == 1 else f"{suptitle} (page {p+1}/{pages})"
-            fig.suptitle(page_title)
-
-            # reservar espaço para o suptitle ao usar tight_layout (rect) [web:6]
-            fig.tight_layout(rect=[0, 0, 1, 0.95])  # rect = (left,bottom,right,top) [web:9]
-
-            # salvar
-            if pages == 1:
-                out_file = savepath
-            else:
-                out_file = savepath.with_name(f"{savepath.stem}_page{p+1:02d}{savepath.suffix}")
-
-            fig.savefig(str(out_file), dpi=dpi, bbox_inches="tight")
-            plt.close(fig)
-            out_paths.append(str(out_file))
-
-        return out_paths[0] if len(out_paths) == 1 else out_paths

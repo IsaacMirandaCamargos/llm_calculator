@@ -14,7 +14,7 @@ class Tokenizer:
         for e in encs:
             delta_size = max_len - len(e.ids)
             pieces = [self.tokenizer.decode([i], skip_special_tokens=False) for i in e.ids]  # [web:9]
-            out.append({"tokens": e.ids + [self.pad_token_id] * delta_size, "pieces": pieces + ["<pad>"] * delta_size})
+            out.append({"tokens": e.ids + [self.pad_token_id] * delta_size, "pieces": pieces + ["<pad>"] * delta_size, "index_answer": pieces.index("<answer>")})
         return out
 
 def batch_iterator(batch_size=256):

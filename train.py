@@ -26,7 +26,7 @@ if __name__ == "__main__":
             "head_dim": 64,
             "n_heads": 16,
             "ff_ratio": 4,
-            "n_layers": 8,
+            "n_layers": 6,
             "mask": True
         },
         "training": {
@@ -85,10 +85,19 @@ if __name__ == "__main__":
             # Tokenize batch
             batch = tokenizer.encode_with_tokens(b)
             inputs = torch.tensor([b['tokens'] for b in batch], dtype=torch.long).to(device)
+            B, T = inputs.shape
+
+            idxs = torch.tensor([item["index_answer"] for item in batch], device=inputs.device, dtype=torch.long)  # (B,)
+
+            pos = torch.arange(T, device=inputs.device).unsqueeze(0)     # (1, T)
+
+            mask = pos >= idxs.unsqueeze(1)  # (B, T) True a partir de idx, False antes
+            mask = mask[:, 1:]
 
             # Shift inputs for teacher forcing
             x = inputs[:, :-1]
             y = inputs[:, 1:]
+            y[~mask] = tokenizer.pad_token_id # ignorar posições de padding na perda
 
             # Forward pass
             x, scores = model(x)
